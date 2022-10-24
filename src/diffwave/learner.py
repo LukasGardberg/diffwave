@@ -101,7 +101,8 @@ class DiffWaveLearner:
   def train(self, max_steps=None):
     device = next(self.model.parameters()).device
     while True:
-      for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+      epoch_desc = self.step // len(self.dataset) if len(self.dataset) != 0 else 0
+      for features in tqdm(self.dataset, desc=f'Epoch {epoch_desc}') if self.is_master else self.dataset:
         if max_steps is not None and self.step >= max_steps:
           return
         features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
@@ -169,7 +170,8 @@ def train(args, params):
     dataset = from_gtzan(params)
   else:
     dataset = from_path(args.data_dirs, params)
-  model = DiffWave(params).cuda()
+  
+  model = DiffWave(params).cuda() if torch.cuda.is_available() else DiffWave(params)
   _train_impl(0, model, dataset, args, params)
 
 
