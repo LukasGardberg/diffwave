@@ -26,7 +26,7 @@ from tqdm import tqdm
 from diffwave.params import params
 
 
-def transform(filename):
+def transform(filename, save=True):
   audio, sr = T.load(filename)
   audio = torch.clamp(audio[0], -1.0, 1.0)
 
@@ -49,8 +49,10 @@ def transform(filename):
     spectrogram = mel_spec_transform(audio)
     spectrogram = 20 * torch.log10(torch.clamp(spectrogram, min=1e-5)) - 20
     spectrogram = torch.clamp((spectrogram + 100) / 100, 0.0, 1.0)
-    np.save(f'{filename}.spec.npy', spectrogram.cpu().numpy())
-
+    if save:
+      np.save(f'{filename}.spec.npy', spectrogram.cpu().numpy())
+    else:
+      return spectrogram
 
 def main(args):
   filenames = glob(f'{args.dir}/**/*.wav', recursive=True)

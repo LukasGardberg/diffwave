@@ -32,7 +32,10 @@ def predict(spectrogram=None, model_dir=None, params=None, device=torch.device('
     if os.path.exists(f'{model_dir}/weights.pt'):
       checkpoint = torch.load(f'{model_dir}/weights.pt')
     else:
-      checkpoint = torch.load(model_dir)
+      if torch.cuda.is_available():
+        checkpoint = torch.load(model_dir)
+      else:
+        checkpoint = torch.load(model_dir, map_location=torch.device('cpu'))
     model = DiffWave(AttrDict(base_params)).to(device)
     model.load_state_dict(checkpoint['model'])
     model.eval()
