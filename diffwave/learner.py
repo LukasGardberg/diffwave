@@ -25,6 +25,7 @@ from tqdm import tqdm
 from diffwave.dataset import from_path, from_gtzan
 from diffwave.model import DiffWave
 from diffwave.params import AttrDict
+import wandb
 
 
 def _nested_map(struct, map_fn):
@@ -38,7 +39,7 @@ def _nested_map(struct, map_fn):
 
 
 class DiffWaveLearner:
-  def __init__(self, model_dir, model, dataset, optimizer, params, *args, **kwargs):
+  def __init__(self, model_dir, model, dataset, optimizer, params, wandb_log, log_dir, *args, **kwargs):
     os.makedirs(model_dir, exist_ok=True)
     self.model_dir = model_dir
     self.model = model
@@ -49,6 +50,9 @@ class DiffWaveLearner:
     self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
     self.step = 0
     self.is_master = True
+
+    self.wandb_log = wandb_log
+    self.log_dir = log_dir
 
     beta = np.array(self.params.noise_schedule)
     noise_level = np.cumprod(1 - beta)
@@ -92,30 +96,58 @@ class DiffWaveLearner:
 
   def restore_from_checkpoint(self, filename='weights'):
     try:
-      checkpoint = torch.load(f'{self.model_dir}/{filename}.pt')
+      ch_name = f'{self.model_dir}/{filename}.pt'
+      checkpoint = torch.load(ch_name)
       self.load_state_dict(checkpoint)
+      print(f'Restored checkpoint from {ch_name}')
       return True
     except FileNotFoundError:
       return False
 
   def train(self, max_steps=None):
     device = next(self.model.parameters()).device
+
+    log_interval = len(self.dataset) + 8 if device == torch.device('cpu') else 100
+
     while True:
       epoch_desc = self.step // len(self.dataset) if len(self.dataset) != 0 else 0
-      for features in tqdm(self.dataset, desc=f'Epoch {epoch_desc}') if self.is_master else self.dataset:
+
+      data_iterator = tqdm(self.dataset, desc=f'Epoch {epoch_desc}')
+      for features in data_iterator:
+
         if max_steps is not None and self.step >= max_steps:
           return
+
         features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+
         loss = self.train_step(features)
         if torch.isnan(loss).any():
           raise RuntimeError(f'Detected NaN loss at step {self.step}.')
+        
         if self.is_master:
-          if self.step % 50 == 0:
-            print(loss.item())
-            self._write_summary(self.step, features, loss)
-          if self.step % len(self.dataset) == 0:
-            self.save_to_checkpoint()
+          
+          if self.step % log_interval == 0:
+            ckpt_name = 'weights.pt'
+            self.save_to_checkpoint(filename=ckpt_name)
+
+            if self.wandb_log:
+              self.log_artifact(ckpt_name)
+
+              output_dir, sr = self.model.generate(device, output_name=f"LJ004-eval-epoch{epoch_desc}.wav", log_dir=self.log_dir)
+              wandb.log({'audio': wandb.Audio(output_dir, sample_rate=sr, caption=f"Epoch {epoch_desc}")})
+
+          data_iterator.set_postfix(loss=f'{loss.item():.4f}')
+
+          if self.wandb_log: wandb.log({'loss': loss.item()}, step=self.step)
+        
+        # Epoch done
+
         self.step += 1
+
+  def log_artifact(self, name):
+    model_artifact = wandb.Artifact(name, type='model')
+    model_artifact.add_dir(self.model_dir)
+    wandb.run.log_artifact(model_artifact)
 
   def train_step(self, features):
     for param in self.model.parameters():
@@ -157,12 +189,30 @@ class DiffWaveLearner:
 
 
 def _train_impl(replica_id, model, dataset, args, params):
+  # Enables cudnn auto tuning of compute graph
   torch.backends.cudnn.benchmark = True
+  # torch.backends.cudnn.benchmark = False
+
   opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
-  learner = DiffWaveLearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
+  learner = DiffWaveLearner(
+    args.model_dir, 
+    model, 
+    dataset, 
+    opt, params, 
+    wandb_log=args.wandb_log, 
+    fp16=args.fp16, 
+    log_dir=args.log_dir
+    )
+
   learner.is_master = (replica_id == 0)
   learner.restore_from_checkpoint()
+
+  if args.wandb_log:
+    wandb.init(project=args.project_name)
+
+    wandb.watch(model, log='all')
+
   learner.train(max_steps=args.max_steps)
 
 
@@ -173,6 +223,7 @@ def train(args, params):
     dataset = from_path(args.data_dirs, params)
   
   model = DiffWave(params).cuda() if torch.cuda.is_available() else DiffWave(params)
+
   _train_impl(0, model, dataset, args, params)
 
 

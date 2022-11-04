@@ -17,8 +17,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio
 
 from math import sqrt
+import os
 
 
 Linear = nn.Linear
@@ -142,7 +144,7 @@ class DiffWave(nn.Module):
     self.output_projection = Conv1d(params.residual_channels, 1, 1)
     nn.init.zeros_(self.output_projection.weight)
 
-  def forward(self, audio, diffusion_step, spectrogram=None):
+  def __call__(self, audio, diffusion_step, spectrogram=None):
     assert (spectrogram is None and self.spectrogram_upsampler is None) or \
            (spectrogram is not None and self.spectrogram_upsampler is not None)
     x = audio.unsqueeze(1)
@@ -163,3 +165,59 @@ class DiffWave(nn.Module):
     x = F.relu(x)
     x = self.output_projection(x)
     return x
+
+  @torch.no_grad()
+  def generate(self, device, output_name, log_dir, spectrogram=None, fast_sampling=False):
+
+    output_dir = log_dir + '/' + output_name
+
+    if spectrogram is None:
+      spec_name = 'wavs11025/LJ001-0005_11025.wav.spec.npy'
+      spectrogram = torch.from_numpy(np.load(spec_name))
+
+    training_noise_schedule = np.array(self.params.noise_schedule)
+    inference_noise_schedule = np.array(self.params.inference_noise_schedule) if fast_sampling else training_noise_schedule
+
+    talpha = 1 - training_noise_schedule
+    talpha_cum = np.cumprod(talpha)
+
+    beta = inference_noise_schedule
+    alpha = 1 - beta
+    alpha_cum = np.cumprod(alpha)
+
+    T = []
+    for s in range(len(inference_noise_schedule)):
+      for t in range(len(training_noise_schedule) - 1):
+        if talpha_cum[t+1] <= alpha_cum[s] <= talpha_cum[t]:
+          twiddle = (talpha_cum[t]**0.5 - alpha_cum[s]**0.5) / (talpha_cum[t]**0.5 - talpha_cum[t+1]**0.5)
+          T.append(t + twiddle)
+          break
+    T = np.array(T, dtype=np.float32)
+
+    if not self.params.unconditional:
+      if len(spectrogram.shape) == 2:# Expand rank 2 tensors by adding a batch dimension.
+        spectrogram = spectrogram.unsqueeze(0)
+      spectrogram = spectrogram.to(device)
+      audio = torch.randn(spectrogram.shape[0], self.params.hop_samples * spectrogram.shape[-1], device=device)
+    else:
+      audio = torch.randn(1, self.params.audio_len, device=device)
+
+    for n in range(len(alpha) - 1, -1, -1):
+      c1 = 1 / alpha[n]**0.5
+      c2 = beta[n] / (1 - alpha_cum[n])**0.5
+      audio = c1 * (audio - c2 * self(audio, torch.tensor([T[n]], device=audio.device), spectrogram).squeeze(1))
+      if n > 0:
+        noise = torch.randn_like(audio)
+        sigma = ((1.0 - alpha_cum[n-1]) / (1.0 - alpha_cum[n]) * beta[n])**0.5
+        audio += sigma * noise
+      audio = torch.clamp(audio, -1.0, 1.0)
+
+    # If file already exists, append a number to the end of the file name.
+    if os.path.exists(output_dir):
+      i = 1
+      while os.path.exists(output_dir + f'_{i}'):
+        i += 1
+      output_dir += f'_{i}'
+      
+    torchaudio.save(output_dir, audio.cpu(), self.params.sample_rate)
+    return output_dir, self.params.sample_rate

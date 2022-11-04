@@ -1,2 +1,9 @@
 *.pt
 __pycache__/
+.DS_Store
+*.pyc
+*.wav
+*.npy
+diffwave_docker/
+wandb/
+model/

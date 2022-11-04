@@ -26,11 +26,12 @@ from diffwave.model import DiffWave
 
 models = {}
 
-def predict(spectrogram=None, model_dir=None, params=None, device=torch.device('cuda'), fast_sampling=False):
+def predict(spectrogram=None, model_dir=None, params=None, device=torch.device('cuda'), fast_sampling=False, weights_file='weights.pt'):
   # Lazy load model.
   if not model_dir in models:
-    if os.path.exists(f'{model_dir}/weights.pt'):
-      checkpoint = torch.load(f'{model_dir}/weights.pt')
+    if os.path.exists(f'{model_dir}/{weights_file}'):
+      print(f'Loading model from {model_dir}/{weights_file}')
+      checkpoint = torch.load(f'{model_dir}/{weights_file}')
     else:
       if torch.cuda.is_available():
         checkpoint = torch.load(model_dir)
