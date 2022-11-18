@@ -18,7 +18,7 @@ def do_training():
         "log_dir": log_dir,
         "max_steps": None,
         "fp16": False,
-        "wandb_log": True,
+        "wandb_log": False,
         "project_name": "diffwave_gpu_1.0",
     }
 

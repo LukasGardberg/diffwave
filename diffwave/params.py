@@ -32,9 +32,9 @@ class AttrDict(dict):
     return self
 
 
-params = AttrDict(
+params_test = AttrDict(
     # Training params
-    batch_size=1,
+    batch_size=16,
     learning_rate=2e-4,
     max_grad_norm=None,
 
@@ -46,7 +46,7 @@ params = AttrDict(
     crop_mel_frames=62,  # Probably an error in paper.
 
     # Model params
-    residual_layers=1,
+    residual_layers=30,
     residual_channels=64,
     dilation_cycle_length=10,
     unconditional = False,
@@ -57,7 +57,7 @@ params = AttrDict(
     audio_len = 22050*5, # unconditional_synthesis_samples
 )
 
-params_orig = AttrDict(
+params = AttrDict(
     # Training params
     batch_size=16,
     learning_rate=2e-4,

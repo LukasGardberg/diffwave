@@ -172,7 +172,7 @@ class DiffWave(nn.Module):
     output_dir = log_dir + '/' + output_name
 
     if spectrogram is None:
-      spec_name = 'wavs11025/LJ001-0005_11025.wav.spec.npy'
+      spec_name = 'wavs11025/LJ001-0005.wav.spec.npy'
       spectrogram = torch.from_numpy(np.load(spec_name))
 
     training_noise_schedule = np.array(self.params.noise_schedule)

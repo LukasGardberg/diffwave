@@ -38,7 +38,9 @@ class ConditionalDataset(torch.utils.data.Dataset):
     audio_filename = self.filenames[idx]
     spec_filename = f'{audio_filename}.spec.npy'
     signal, _ = torchaudio.load(audio_filename)
+
     spectrogram = np.load(spec_filename)
+
     return {
         'audio': signal[0],
         'spectrogram': spectrogram.T
@@ -109,31 +111,6 @@ class Collator:
     return {
         'audio': torch.from_numpy(audio),
         'spectrogram': torch.from_numpy(spectrogram),
-    }
-
-  # for gtzan
-  def collate_gtzan(self, minibatch):
-    ldata = []
-    mean_audio_len = self.params.audio_len # change to fit in gpu memory
-    # audio total generated time = audio_len * sample_rate
-    # GTZAN statistics
-    # max len audio 675808; min len audio sample 660000; mean len audio sample 662117
-    # max audio sample 1; min audio sample -1; mean audio sample -0.0010 (normalized)
-    # sample rate of all is 22050
-    for data in minibatch:
-      if data[0].shape[-1] < mean_audio_len:  # pad
-        data_audio = F.pad(data[0], (0, mean_audio_len - data[0].shape[-1]), mode='constant', value=0)
-      elif data[0].shape[-1] > mean_audio_len:  # crop
-        start = random.randint(0, data[0].shape[-1] - mean_audio_len)
-        end = start + mean_audio_len
-        data_audio = data[0][:, start:end]
-      else:
-        data_audio = data[0]
-      ldata.append(data_audio)
-    audio = torch.cat(ldata, dim=0)
-    return {
-          'audio': audio,
-          'spectrogram': None,
     }
 
 

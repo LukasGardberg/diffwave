@@ -107,12 +107,13 @@ class DiffWaveLearner:
   def train(self, max_steps=None):
     device = next(self.model.parameters()).device
 
-    log_interval = len(self.dataset) + 8 if device == torch.device('cpu') else 100
+    log_interval = len(self.dataset)+8 if device == torch.device('cpu') else 100
+    print(f'Logging every {log_interval} steps, using device {device}')
 
     while True:
       epoch_desc = self.step // len(self.dataset) if len(self.dataset) != 0 else 0
 
-      data_iterator = tqdm(self.dataset, desc=f'Epoch {epoch_desc}')
+      data_iterator = tqdm(self.dataset, desc=f'Epoch {epoch_desc}') if self.is_master else self.dataset
       for features in data_iterator:
 
         if max_steps is not None and self.step >= max_steps:
@@ -125,13 +126,14 @@ class DiffWaveLearner:
           raise RuntimeError(f'Detected NaN loss at step {self.step}.')
         
         if self.is_master:
+            # self._write_summary(self.step, features, loss)
           
-          if self.step % log_interval == 0:
-            ckpt_name = 'weights.pt'
-            self.save_to_checkpoint(filename=ckpt_name)
+          if self.step > 10 and self.step % log_interval == 0:
+            self.save_to_checkpoint()
 
             if self.wandb_log:
-              self.log_artifact(ckpt_name)
+              print(f"Logging on step {self.step}")
+              self.log_artifact()
 
               output_dir, sr = self.model.generate(device, output_name=f"LJ004-eval-epoch{epoch_desc}.wav", log_dir=self.log_dir)
               wandb.log({'audio': wandb.Audio(output_dir, sample_rate=sr, caption=f"Epoch {epoch_desc}")})
@@ -144,8 +146,8 @@ class DiffWaveLearner:
 
         self.step += 1
 
-  def log_artifact(self, name):
-    model_artifact = wandb.Artifact(name, type='model')
+  def log_artifact(self, name='weights'):
+    model_artifact = wandb.Artifact(f"{name}.pt", type='model')
     model_artifact.add_dir(self.model_dir)
     wandb.run.log_artifact(model_artifact)
 
@@ -176,16 +178,6 @@ class DiffWaveLearner:
     self.scaler.step(self.optimizer)
     self.scaler.update()
     return loss
-
-  def _write_summary(self, step, features, loss):
-    writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
-    writer.add_audio('feature/audio', features['audio'][0], step, sample_rate=self.params.sample_rate)
-    if not self.params.unconditional:
-      writer.add_image('feature/spectrogram', torch.flip(features['spectrogram'][:1], [1]), step)
-    writer.add_scalar('train/loss', loss, step)
-    writer.add_scalar('train/grad_norm', self.grad_norm, step)
-    writer.flush()
-    self.summary_writer = writer
 
 
 def _train_impl(replica_id, model, dataset, args, params):
@@ -221,6 +213,9 @@ def train(args, params):
     dataset = from_gtzan(params)
   else:
     dataset = from_path(args.data_dirs, params)
+
+  # move dataset data to gpu
+  if torch.cuda.is_available(): dataset.dataset.cuda()
   
   model = DiffWave(params).cuda() if torch.cuda.is_available() else DiffWave(params)
 
