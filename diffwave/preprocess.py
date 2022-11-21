@@ -30,6 +30,10 @@ def transform(filename, save=True):
   audio, sr = T.load(filename)
   audio = torch.clamp(audio[0], -1.0, 1.0)
 
+  return _transform_audio(audio, sr, save, filename)
+
+
+def _transform_audio(audio, sr, save=True, filename=None):
   if params.sample_rate != sr:
     raise ValueError(f'Invalid sample rate {sr}.')
   mel_args = {
@@ -49,10 +53,11 @@ def transform(filename, save=True):
     spectrogram = mel_spec_transform(audio)
     spectrogram = 20 * torch.log10(torch.clamp(spectrogram, min=1e-5)) - 20
     spectrogram = torch.clamp((spectrogram + 100) / 100, 0.0, 1.0)
-    if save:
+    if save and filename is not None:
       np.save(f'{filename}.spec.npy', spectrogram.cpu().numpy())
     else:
       return spectrogram
+
 
 def main(args):
   filenames = glob(f'{args.dir}/**/*.wav', recursive=True)
